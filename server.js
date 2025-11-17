@@ -12,6 +12,65 @@ app.use(express.json());
 app.use(cors());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// === MÉTRICAS PROMETHEUS ===
+const client = require('prom-client');
+
+// Habilita coleta padrão (CPU, memória, event loop, etc.)
+client.collectDefaultMetrics();
+
+// Métrica: total de requisições por método e rota
+const httpRequestCounter = new client.Counter({
+  name: 'http_requests_total',
+  help: 'Total de requisições HTTP',
+  labelNames: ['method', 'route', 'status']
+});
+
+// Métrica: histograma de duração das requisições
+const httpRequestDuration = new client.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'Duração das requisições HTTP em segundos',
+  labelNames: ['method', 'route', 'status'],
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.3, 0.5, 1, 3, 5]
+});
+
+// Middleware para medir requisições
+app.use((req, res, next) => {
+  const start = Date.now();
+
+  res.on('finish', () => {
+    const route = req.route?.path || req.path;
+    const status = res.statusCode;
+
+    httpRequestCounter.inc({
+      method: req.method,
+      route,
+      status
+    });
+
+    httpRequestDuration.observe(
+      {
+        method: req.method,
+        route,
+        status
+      },
+      (Date.now() - start) / 1000
+    );
+  });
+
+  next();
+});
+
+// Endpoint /metrics
+app.get('/metrics', async (req, res) => {
+  try {
+    res.set('Content-Type', client.register.contentType);
+    res.end(await client.register.metrics());
+  } catch (err) {
+    res.status(500).end(err);
+  }
+});
+
+
 // util: read/write JSON file
 function readData() {
   try {
@@ -36,87 +95,145 @@ function calculaValorTotal(produtosVenda) {
 }
 
 // endpoints
-app.get('/api/sales', (req, res) => {
-  const sales = readData();
-  res.json(sales);
-});
+const pool = require('./db');
+app.get('/api/sales', async (req, res) => {
+  try {
+    const vendas = await pool.query(`SELECT * FROM vendas`);
 
-app.get('/api/sales/:id', (req, res) => {
-  const id = req.params.id;
-  const sales = readData();
-  const found = sales.find(s => s.id === id);
-  if (!found) return res.status(404).json({ error: 'Venda não encontrada' });
-  res.json(found);
-});
+    for (let v of vendas.rows) {
 
-app.post('/api/sales', (req, res) => {
-  const body = req.body;
+      const prods = await pool.query(
+        `SELECT * FROM produtos_venda WHERE venda_id = $1`,
+        [v.id]
+      );
 
-  // validação básica
-  if (!body.dataVenda || !body.cliente || !Array.isArray(body.produtos)) {
-    return res.status(400).json({ error: 'Campos obrigatórios: dataVenda, cliente, produtos' });
+      v.produtos = prods.rows;
+    }
+
+    res.json(vendas.rows);
+  } catch (e) {
+    console.error("ERRO:", e);   // debug
+    res.status(500).json({ error: e.message });
   }
-
-  const valorTotal = calculaValorTotal(body.produtos);
-
-  const sale = {
-    id: uuidv4(),
-    dataVenda: body.dataVenda, // esperar ISO string ou yyyy-mm-dd
-    cliente: body.cliente,
-    produtos: body.produtos.map(pv => ({
-      produto: {
-        nome: String(pv.produto?.nome || '').trim(),
-        valor: Number(pv.produto?.valor || 0)
-      },
-      quantidade: Number(pv.quantidade || 0)
-    })),
-    valorTotal: Number(valorTotal)
-  };
-
-  const sales = readData();
-  sales.unshift(sale); // mais recente primeiro
-  writeData(sales);
-
-  res.status(201).json(sale);
 });
 
-app.put('/api/sales/:id', (req, res) => {
-  const id = req.params.id;
-  const body = req.body;
-  const sales = readData();
-  const idx = sales.findIndex(s => s.id === id);
-  if (idx === -1) return res.status(404).json({ error: 'Venda não encontrada' });
 
-  const valorTotal = calculaValorTotal(body.produtos);
 
-  const updated = {
-    ...sales[idx],
-    dataVenda: body.dataVenda || sales[idx].dataVenda,
-    cliente: body.cliente || sales[idx].cliente,
-    produtos: Array.isArray(body.produtos) ? body.produtos.map(pv => ({
-      produto: {
-        nome: String(pv.produto?.nome || '').trim(),
-        valor: Number(pv.produto?.valor || 0)
-      },
-      quantidade: Number(pv.quantidade || 0)
-    })) : sales[idx].produtos,
-    valorTotal: Number(valorTotal)
-  };
+app.get('/api/sales/:id', async (req, res) => {
+  try {
+    const venda = await pool.query(
+      `SELECT * FROM vendas WHERE id = $1`,
+      [req.params.id]
+    );
 
-  sales[idx] = updated;
-  writeData(sales);
-  res.json(updated);
+    if (venda.rowCount === 0) {
+      return res.status(404).json({ error: 'Venda não encontrada' });
+    }
+
+    const produtos = await pool.query(
+      `SELECT nome, valor, quantidade FROM produtos_venda WHERE venda_id = $1`,
+      [req.params.id]
+    );
+
+    venda.rows[0].produtos = produtos.rows;
+    res.json(venda.rows[0]);
+
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.delete('/api/sales/:id', (req, res) => {
-  const id = req.params.id;
-  let sales = readData();
-  const origLen = sales.length;
-  sales = sales.filter(s => s.id !== id);
-  if (sales.length === origLen) return res.status(404).json({ error: 'Venda não encontrada' });
-  writeData(sales);
-  res.json({ success: true });
+
+app.post('/api/sales', async (req, res) => {
+  try {
+    const { dataVenda, cliente, produtos } = req.body;
+
+    if (!dataVenda || !cliente || !Array.isArray(produtos)) {
+      return res.status(400).json({ error: 'Campos obrigatórios: dataVenda, cliente, produtos' });
+    }
+
+    const valorTotal = calculaValorTotal(produtos);
+    const id = uuidv4();
+
+    await pool.query(
+      `INSERT INTO vendas (id, data_venda, cliente, valor_total)
+       VALUES ($1, $2, $3, $4)`,
+      [id, dataVenda, cliente, valorTotal]
+    );
+
+    for (const p of produtos) {
+      await pool.query(
+        `INSERT INTO produtos_venda (venda_id, nome, valor, quantidade)
+         VALUES ($1, $2, $3, $4)`,
+        [id, p.produto.nome, p.produto.valor, p.quantidade]
+      );
+    }
+
+    res.status(201).json({ id, dataVenda, cliente, produtos, valorTotal });
+
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
+
+
+app.put('/api/sales/:id', async (req, res) => {
+  try {
+    const { dataVenda, cliente, produtos } = req.body;
+    const id = req.params.id;
+
+    const venda = await pool.query(`SELECT * FROM vendas WHERE id = $1`, [id]);
+    if (venda.rowCount === 0) {
+      return res.status(404).json({ error: 'Venda não encontrada' });
+    }
+
+    const valorTotal = calculaValorTotal(produtos);
+
+    await pool.query(
+      `UPDATE vendas SET data_venda=$1, cliente=$2, valor_total=$3 WHERE id=$4`,
+      [dataVenda, cliente, valorTotal, id]
+    );
+
+    // Apagar produtos antigos
+    await pool.query(`DELETE FROM produtos_venda WHERE venda_id = $1`, [id]);
+
+    // Inserir novos
+    for (const p of produtos) {
+      await pool.query(
+        `INSERT INTO produtos_venda (venda_id, nome, valor, quantidade)
+         VALUES ($1, $2, $3, $4)`,
+        [id, p.produto.nome, p.produto.valor, p.quantidade]
+      );
+    }
+
+    res.json({ id, dataVenda, cliente, produtos, valorTotal });
+
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+app.delete('/api/sales/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const result = await pool.query(
+      `DELETE FROM vendas WHERE id = $1`,
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Venda não encontrada' });
+    }
+
+    res.json({ success: true });
+
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 
 // fallback: serve index.html for SPA
 app.get('*', (req, res) => {

@@ -153,13 +153,17 @@
             function renderSales(sales) {
                 salesTableBody.innerHTML = '';
                 for (const s of sales) {
+
+                    const produtosResumo = s.produtos
+                        .map(pv => `${pv.nome} (${pv.quantidade}x)`)
+                        .join(', ');
+
                     const tr = document.createElement('tr');
-                    const produtosResumo = s.produtos.map(pv => `${pv.produto.nome} (${pv.quantidade}x)`).join(', ');
                     tr.innerHTML = `
-        <td>${formatDate(s.dataVenda)}</td>
+        <td>${formatDate(s.data_venda)}</td>
         <td>${escapeHtml(s.cliente)}</td>
         <td>${escapeHtml(produtosResumo)}</td>
-        <td>R$ ${Number(s.valorTotal).toFixed(2)}</td>
+        <td>R$ ${(Number(s.valor_total) || 0).toFixed(2)}</td>
         <td>
           <a class="btn-flat blue-text btn-edit" data-id="${s.id}"><i class="material-icons">edit</i></a>
           <a class="btn-flat red-text btn-delete" data-id="${s.id}"><i class="material-icons">delete</i></a>
@@ -192,7 +196,6 @@
 
             function formatDate(dateStr) {
                 if (!dateStr) return '';
-                // se já for yyyy-mm-dd, exibe dd/mm/yyyy
                 const d = new Date(dateStr);
                 if (isNaN(d)) return dateStr;
                 return d.toLocaleDateString();
@@ -228,7 +231,6 @@
                         return;
                     }
 
-                    // reset form
                     saleForm.reset();
                     produtosContainer.innerHTML = '';
                     produtosContainer.appendChild(criaLinhaProduto());
@@ -249,7 +251,7 @@
                 root.innerHTML = `
       <form id="editForm">
         <div class="input-field">
-          <input id="editData" name="dataVenda" type="date" value="${sale.dataVenda}">
+          <input id="editData" name="dataVenda" type="date" value="${sale.data_venda}">
           <label for="editData" class="active">Data</label>
         </div>
         <div class="input-field">
@@ -270,10 +272,10 @@
                     wrapper.className = 'produto-row row valign-wrapper';
                     wrapper.innerHTML = `
         <div class="input-field col s5">
-          <input type="text" class="produto-nome" value="${escapeHtml(pv.produto.nome)}" placeholder="Nome do produto" required>
+          <input type="text" class="produto-nome" value="${escapeHtml(pv.nome)}" placeholder="Nome do produto" required>
         </div>
         <div class="input-field col s3">
-          <input type="number" class="produto-valor" value="${Number(pv.produto.valor)}" placeholder="Valor" required>
+          <input type="number" class="produto-valor" value="${Number(pv.valor)}" placeholder="Valor" required>
         </div>
         <div class="input-field col s2">
           <input type="number" class="produto-qtd" value="${Number(pv.quantidade)}" placeholder="Qtd" required>
@@ -286,11 +288,14 @@
                     return wrapper;
                 }
 
-                (sale.produtos || []).forEach(pv => editProdutos.appendChild(criaLinhaEdit(pv)));
+                (sale.produtos || []).forEach(pv => {
+                    editProdutos.appendChild(criaLinhaEdit(pv));
+                });
+
                 const editAddProduct = root.querySelector('#editAddProduct');
                 editAddProduct.addEventListener('click', (ev) => {
                     ev.preventDefault();
-                    editProdutos.appendChild(criaLinhaEdit({ produto: { nome: '', valor: 0 }, quantidade: 1 }));
+                    editProdutos.appendChild(criaLinhaEdit({ nome: '', valor: 0, quantidade: 1 }));
                 });
 
                 const editForm = root.querySelector('#editForm');
@@ -325,7 +330,6 @@
                 modalInstance.open();
             }
 
-            // start
             loadSales();
         });
 
