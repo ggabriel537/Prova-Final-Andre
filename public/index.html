@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Registro de Vendas</title>
+
+    <!-- Materialize CSS CDN -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" rel="stylesheet">
+
+    <!-- Icons -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body class="blue-lighten-5">
+
+    <nav class="blue darken-2">
+        <div class="nav-wrapper container">
+            <a href="#" class="brand-logo">Vendas</a>
+        </div>
+    </nav>
+
+    <main class="container section">
+        <div class="row">
+            <div class="col s12 m6">
+                <div class="card-panel">
+                    <h5 class="blue-text text-darken-4">Registrar Venda</h5>
+                    <form id="saleForm">
+                        <div class="input-field">
+                            <input id="dataVenda" name="dataVenda" type="date" required>
+                            <label for="dataVenda" class="active">Data da Venda</label>
+                        </div>
+                        <div class="input-field">
+                            <input id="cliente" name="cliente" type="text" required>
+                            <label for="cliente">Nome do Cliente</label>
+                        </div>
+
+                        <div id="produtosContainer">
+                            <h6>Produtos</h6>
+                            <!-- linhas de produtos serão adicionadas aqui -->
+                        </div>
+
+                        <a id="addProduct" class="btn-flat blue-text">+ Adicionar Produto</a>
+
+                        <div class="section">
+                            <button class="btn blue darken-2" type="submit">Salvar Venda</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="col s12 m6">
+                <div class="card-panel">
+                    <h5 class="blue-text text-darken-4">Vendas Registradas</h5>
+                    <table class="striped responsive-table" id="salesTable">
+                        <thead>
+                            <tr>
+                                <th>Data</th>
+                                <th>Cliente</th>
+                                <th>Produtos</th>
+                                <th>Total</th>
+                                <th>Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- linhas preenchidas via JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Modal template para edição (opcional) -->
+    <div id="modalEdit" class="modal">
+        <div class="modal-content">
+            <h5>Editar Venda</h5>
+            <div id="editRoot"></div>
+        </div>
+        <div class="modal-footer">
+            <a class="modal-close btn-flat">Fechar</a>
+        </div>
+    </div>
+
+    <!-- Materialize JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
+    <script>
+        // main.js
+        document.addEventListener('DOMContentLoaded', function () {
+            // init materialize components
+            M.AutoInit();
+
+            const produtosContainer = document.getElementById('produtosContainer');
+            const addProductBtn = document.getElementById('addProduct');
+            const saleForm = document.getElementById('saleForm');
+            const salesTableBody = document.querySelector('#salesTable tbody');
+
+            // cria uma linha de produto (DOM)
+            function criaLinhaProduto(produto = { nome: '', valor: 0 }, quantidade = 1) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'produto-row row valign-wrapper';
+
+                wrapper.innerHTML = `
+      <div class="input-field col s5">
+        <input type="text" class="produto-nome" value="${escapeHtml(produto.nome || '')}" placeholder="Nome do produto" required>
+      </div>
+      <div class="input-field col s3">
+        <input type="number" class="produto-valor" value="${Number(produto.valor || 0)}" placeholder="Valor" required>
+      </div>
+      <div class="input-field col s2">
+        <input type="number" class="produto-qtd" value="${Number(quantidade || 1)}" placeholder="Qtd" required>
+      </div>
+      <div class="col s2">
+        <a class="btn-flat red-text btn-remove"><i class="material-icons">delete</i></a>
+      </div>
+    `;
+
+                wrapper.querySelector('.btn-remove').addEventListener('click', () => {
+                    wrapper.remove();
+                });
+
+                return wrapper;
+            }
+
+            // função de escape simples
+            function escapeHtml(text) {
+                return text
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
+            }
+
+            // adiciona primeira linha
+            produtosContainer.appendChild(criaLinhaProduto());
+
+            addProductBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                produtosContainer.appendChild(criaLinhaProduto());
+            });
+
+            // carregar vendas
+            async function loadSales() {
+                const res = await fetch('/api/sales');
+                const sales = await res.json();
+                renderSales(sales);
+            }
+
+            function renderSales(sales) {
+                salesTableBody.innerHTML = '';
+                for (const s of sales) {
+                    const tr = document.createElement('tr');
+                    const produtosResumo = s.produtos.map(pv => `${pv.produto.nome} (${pv.quantidade}x)`).join(', ');
+                    tr.innerHTML = `
+        <td>${formatDate(s.dataVenda)}</td>
+        <td>${escapeHtml(s.cliente)}</td>
+        <td>${escapeHtml(produtosResumo)}</td>
+        <td>R$ ${Number(s.valorTotal).toFixed(2)}</td>
+        <td>
+          <a class="btn-flat blue-text btn-edit" data-id="${s.id}"><i class="material-icons">edit</i></a>
+          <a class="btn-flat red-text btn-delete" data-id="${s.id}"><i class="material-icons">delete</i></a>
+        </td>
+      `;
+                    salesTableBody.appendChild(tr);
+                }
+
+                // attach delete handlers
+                document.querySelectorAll('.btn-delete').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        const id = e.currentTarget.dataset.id;
+                        if (!confirm('Excluir venda?')) return;
+                        await fetch(`/api/sales/${id}`, { method: 'DELETE' });
+                        loadSales();
+                    });
+                });
+
+                // edit - abre modal com dados (edição simples)
+                document.querySelectorAll('.btn-edit').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        const id = e.currentTarget.dataset.id;
+                        const res = await fetch(`/api/sales/${id}`);
+                        if (!res.ok) return alert('Erro ao buscar venda');
+                        const sale = await res.json();
+                        openEditModal(sale);
+                    });
+                });
+            }
+
+            function formatDate(dateStr) {
+                if (!dateStr) return '';
+                // se já for yyyy-mm-dd, exibe dd/mm/yyyy
+                const d = new Date(dateStr);
+                if (isNaN(d)) return dateStr;
+                return d.toLocaleDateString();
+            }
+
+            saleForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                try {
+                    const dataVenda = document.getElementById('dataVenda').value;
+                    const cliente = document.getElementById('cliente').value.trim();
+                    const produtoRows = Array.from(document.querySelectorAll('.produto-row'));
+                    const produtos = produtoRows.map(row => {
+                        return {
+                            produto: {
+                                nome: row.querySelector('.produto-nome').value.trim(),
+                                valor: parseFloat(row.querySelector('.produto-valor').value) || 0
+                            },
+                            quantidade: parseInt(row.querySelector('.produto-qtd').value) || 1
+                        };
+                    });
+
+                    const payload = { dataVenda, cliente, produtos };
+
+                    const res = await fetch('/api/sales', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!res.ok) {
+                        const err = await res.json();
+                        alert('Erro: ' + (err.error || res.status));
+                        return;
+                    }
+
+                    // reset form
+                    saleForm.reset();
+                    produtosContainer.innerHTML = '';
+                    produtosContainer.appendChild(criaLinhaProduto());
+                    loadSales();
+                    M.toast({ html: 'Venda salva!' });
+                } catch (err) {
+                    console.error(err);
+                    alert('Erro ao salvar venda');
+                }
+            });
+
+            // Modal de edição (simplificado)
+            const modalElem = document.getElementById('modalEdit');
+            const modalInstance = M.Modal.init(modalElem, {});
+
+            function openEditModal(sale) {
+                const root = document.getElementById('editRoot');
+                root.innerHTML = `
+      <form id="editForm">
+        <div class="input-field">
+          <input id="editData" name="dataVenda" type="date" value="${sale.dataVenda}">
+          <label for="editData" class="active">Data</label>
+        </div>
+        <div class="input-field">
+          <input id="editCliente" name="cliente" type="text" value="${escapeHtml(sale.cliente)}">
+          <label for="editCliente" class="active">Cliente</label>
+        </div>
+        <div id="editProdutos"></div>
+        <a id="editAddProduct" class="btn-flat blue-text">+ Adicionar Produto</a>
+        <div class="section">
+          <button class="btn blue darken-2" type="submit">Salvar Alterações</button>
+        </div>
+      </form>
+    `;
+
+                const editProdutos = root.querySelector('#editProdutos');
+                function criaLinhaEdit(pv) {
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'produto-row row valign-wrapper';
+                    wrapper.innerHTML = `
+        <div class="input-field col s5">
+          <input type="text" class="produto-nome" value="${escapeHtml(pv.produto.nome)}" placeholder="Nome do produto" required>
+        </div>
+        <div class="input-field col s3">
+          <input type="number" class="produto-valor" value="${Number(pv.produto.valor)}" placeholder="Valor" required>
+        </div>
+        <div class="input-field col s2">
+          <input type="number" class="produto-qtd" value="${Number(pv.quantidade)}" placeholder="Qtd" required>
+        </div>
+        <div class="col s2">
+          <a class="btn-flat red-text btn-remove"><i class="material-icons">delete</i></a>
+        </div>
+      `;
+                    wrapper.querySelector('.btn-remove').addEventListener('click', () => wrapper.remove());
+                    return wrapper;
+                }
+
+                (sale.produtos || []).forEach(pv => editProdutos.appendChild(criaLinhaEdit(pv)));
+                const editAddProduct = root.querySelector('#editAddProduct');
+                editAddProduct.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    editProdutos.appendChild(criaLinhaEdit({ produto: { nome: '', valor: 0 }, quantidade: 1 }));
+                });
+
+                const editForm = root.querySelector('#editForm');
+                editForm.addEventListener('submit', async (ev) => {
+                    ev.preventDefault();
+                    const dataVenda = root.querySelector('#editData').value;
+                    const cliente = root.querySelector('#editCliente').value.trim();
+                    const produtoRows = Array.from(editProdutos.querySelectorAll('.produto-row'));
+                    const produtos = produtoRows.map(row => ({
+                        produto: {
+                            nome: row.querySelector('.produto-nome').value.trim(),
+                            valor: parseFloat(row.querySelector('.produto-valor').value) || 0
+                        },
+                        quantidade: parseInt(row.querySelector('.produto-qtd').value) || 1
+                    }));
+                    try {
+                        const res = await fetch(`/api/sales/${sale.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ dataVenda, cliente, produtos })
+                        });
+                        if (!res.ok) { alert('Erro ao atualizar'); return; }
+                        modalInstance.close();
+                        loadSales();
+                        M.toast({ html: 'Venda atualizada' });
+                    } catch (err) {
+                        console.error(err);
+                        alert('Erro');
+                    }
+                });
+
+                modalInstance.open();
+            }
+
+            // start
+            loadSales();
+        });
+
+    </script>
+</body>
+
+</html>

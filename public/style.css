@@ -1,0 +1,40 @@
+/* style.css - Tema azul elegante */
+body {
+  background: linear-gradient(180deg, #e8f0ff 0%, #ffffff 100%);
+  min-height: 100vh;
+}
+
+.brand-logo {
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.card-panel {
+  border-radius: 12px;
+  box-shadow: 0 6px 18px rgba(14, 39, 66, 0.08);
+}
+
+.produto-row {
+  margin-bottom: 8px;
+  align-items: center;
+}
+
+input:focus + label {
+  color: #1e88e5 !important;
+}
+
+input[type="date"] {
+  height: 3rem;
+}
+
+/* botões e destaque */
+.btn.blue {
+  background: linear-gradient(90deg, #1976d2, #42a5f5);
+  box-shadow: 0 6px 14px rgba(33, 150, 243, 0.18);
+  border-radius: 10px;
+}
+
+/* tabela */
+table.striped > tbody > tr > td {
+  vertical-align: middle;
+}
